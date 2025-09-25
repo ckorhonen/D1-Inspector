@@ -23,7 +23,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const apiKey = await storage.createApiKey(data);
-      res.json(apiKey);
+      // Don't expose sensitive token in response
+      const safeApiKey = {
+        id: apiKey.id,
+        name: apiKey.name,
+        accountId: apiKey.accountId,
+        isActive: apiKey.isActive,
+        createdAt: apiKey.createdAt
+      };
+      res.json(safeApiKey);
     } catch (error) {
       res.status(400).json({ 
         message: error instanceof Error ? error.message : "Failed to create API key" 
@@ -34,7 +42,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/api-keys", async (req, res) => {
     try {
       const apiKeys = await storage.getApiKeys();
-      res.json(apiKeys);
+      // Don't expose sensitive tokens in response
+      const safeApiKeys = apiKeys.map(key => ({
+        id: key.id,
+        name: key.name,
+        accountId: key.accountId,
+        isActive: key.isActive,
+        createdAt: key.createdAt
+      }));
+      res.json(safeApiKeys);
     } catch (error) {
       res.status(500).json({ 
         message: error instanceof Error ? error.message : "Failed to fetch API keys" 
@@ -158,7 +174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const startTime = Date.now();
         
         // Generate mock results based on query
-        let mockResults = [];
+        let mockResults: any[] = [];
         if (query.toLowerCase().includes('select')) {
           if (req.params.id === 'db-test-1') {
             // Users Database mock data

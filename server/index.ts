@@ -21,7 +21,9 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
+      
+      // Don't log response bodies for sensitive endpoints
+      if (capturedJsonResponse && !path.includes("/api-keys")) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
@@ -37,15 +39,27 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Add mock data for testing when in development mode
+  // Add data for testing when in development mode
   if (app.get("env") === "development") {
     const { storage } = await import("./storage");
     
-    // Add a mock API key for testing
+    // Add real Cloudflare credentials if available
+    if (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) {
+      await storage.createApiKey({
+        name: "Real Cloudflare Account",
+        cloudflareToken: process.env.CLOUDFLARE_API_TOKEN,
+        accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+        isActive: true,
+      });
+      log("Real Cloudflare credentials configured");
+    }
+    
+    // Also add a mock API key for fallback testing
     await storage.createApiKey({
       name: "Mock Development Key",
       cloudflareToken: "mock-token-for-testing",
       accountId: "mock-account-id",
+      isActive: false,
     });
 
     // Add some mock databases
@@ -61,7 +75,7 @@ app.use((req, res, next) => {
       accountId: "mock-account-id",
     });
 
-    log("Mock data created for development testing");
+    log("Development testing data configured");
   }
 
   const server = await registerRoutes(app);
