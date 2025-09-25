@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Database, ApiKey } from "@shared/schema";
+import { Link, useLocation } from "wouter";
+import { Database, ApiKey, SavedQuery } from "@shared/schema";
 import { Database as DatabaseIcon, Settings, Plus, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +23,7 @@ export default function DatabaseSidebar({
   onSelectDatabase, 
   isLoading 
 }: DatabaseSidebarProps) {
+  const [location] = useLocation();
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const [apiKeyForm, setApiKeyForm] = useState({
     name: "",
@@ -31,12 +33,26 @@ export default function DatabaseSidebar({
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: apiKeys } = useQuery({
+  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
     queryKey: ["/api/api-keys"],
+    queryFn: async () => {
+      const response = await fetch("/api/api-keys");
+      if (!response.ok) {
+        throw new Error(`${response.status}: ${response.statusText}`);
+      }
+      return response.json();
+    },
   });
 
-  const { data: savedQueries } = useQuery({
+  const { data: savedQueries = [] } = useQuery<SavedQuery[]>({
     queryKey: ["/api/saved-queries", selectedDatabase?.id],
+    queryFn: async () => {
+      const response = await fetch(`/api/saved-queries?databaseId=${selectedDatabase?.id}`);
+      if (!response.ok) {
+        throw new Error(`${response.status}: ${response.statusText}`);
+      }
+      return response.json();
+    },
     enabled: !!selectedDatabase?.id,
   });
 
@@ -87,24 +103,28 @@ export default function DatabaseSidebar({
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
             Analytics
           </h3>
-          <Button
-            variant="default"
-            size="sm"
-            className="w-full justify-start text-sm"
-            data-testid="nav-query-editor"
-          >
-            <DatabaseIcon className="w-4 h-4 mr-3" />
-            Query Editor
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start text-sm"
-            data-testid="nav-saved-queries"
-          >
-            <Plus className="w-4 h-4 mr-3" />
-            Saved Queries ({savedQueries?.length || 0})
-          </Button>
+          <Link href="/">
+            <Button
+              variant={location === "/" ? "default" : "ghost"}
+              size="sm"
+              className="w-full justify-start text-sm"
+              data-testid="nav-query-editor"
+            >
+              <DatabaseIcon className="w-4 h-4 mr-3" />
+              Query Editor
+            </Button>
+          </Link>
+          <Link href="/saved-queries">
+            <Button
+              variant={location === "/saved-queries" ? "default" : "ghost"}
+              size="sm"
+              className="w-full justify-start text-sm"
+              data-testid="nav-saved-queries"
+            >
+              <Plus className="w-4 h-4 mr-3" />
+              Saved Queries ({savedQueries?.length || 0})
+            </Button>
+          </Link>
         </div>
 
         {/* Databases */}
