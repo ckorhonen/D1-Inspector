@@ -6,6 +6,7 @@ import SQLEditor from "@/components/sql-editor";
 import QueryResults from "@/components/query-results";
 import AiChat from "@/components/ai-chat";
 import SavedQueriesPage from "@/pages/saved-queries";
+import TableDataView from "@/components/table-data-view";
 import { Database } from "@shared/schema";
 import { Database as DatabaseIcon, Loader2, Bot, Bell, User, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import { apiRequest } from "@/lib/queryClient";
 export default function AppLayout() {
   const [location] = useLocation();
   const [selectedDatabase, setSelectedDatabase] = useState<Database | null>(null);
+  const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [currentQuery, setCurrentQuery] = useState("");
   const [queryResults, setQueryResults] = useState<any>(null);
   const [showAiChat, setShowAiChat] = useState(true);
@@ -85,15 +87,25 @@ export default function AppLayout() {
       setSelectedDatabase(database);
     }
     
-    // Generate a SELECT query for the table
-    const query = `SELECT * FROM "${tableName}" LIMIT 100;`;
-    setCurrentQuery(query);
+    // Set the selected table to switch to table view
+    setSelectedTable(tableName);
     
     // Show a toast notification
     toast({
       title: "Table Selected",
-      description: `Loaded sample query for table "${tableName}"`,
+      description: `Viewing data for table "${tableName}"`,
     });
+  };
+
+  // Handle table deselection (back to SQL editor)
+  const handleTableDeselect = () => {
+    setSelectedTable(null);
+  };
+
+  // Reset selectedTable when database changes
+  const handleDatabaseSelect = (database: Database) => {
+    setSelectedDatabase(database);
+    setSelectedTable(null); // Reset table selection when database changes
   };
 
   // Show welcome screen if no API key is configured
@@ -179,7 +191,7 @@ export default function AppLayout() {
       <DatabaseSidebar
         databases={databases}
         selectedDatabase={selectedDatabase}
-        onSelectDatabase={setSelectedDatabase}
+        onSelectDatabase={handleDatabaseSelect}
         onTableSelect={handleTableSelect}
         isLoading={databasesLoading}
       />
@@ -225,22 +237,34 @@ export default function AppLayout() {
 
           {/* Main Content */}
           <div className="flex-1 flex">
-            <div className="flex-1 flex flex-col">
-              <SQLEditor
+            {selectedTable ? (
+              // Table Data View
+              <TableDataView
                 selectedDatabase={selectedDatabase}
-                currentQuery={currentQuery}
-                onQueryChange={setCurrentQuery}
-                onQueryExecute={setQueryResults}
+                selectedTable={selectedTable}
+                onTableDeselect={handleTableDeselect}
               />
-              <QueryResults results={queryResults} selectedDatabase={selectedDatabase} />
-            </div>
+            ) : (
+              // SQL Editor View
+              <>
+                <div className="flex-1 flex flex-col">
+                  <SQLEditor
+                    selectedDatabase={selectedDatabase}
+                    currentQuery={currentQuery}
+                    onQueryChange={setCurrentQuery}
+                    onQueryExecute={setQueryResults}
+                  />
+                  <QueryResults results={queryResults} selectedDatabase={selectedDatabase} />
+                </div>
 
-            {showAiChat && (
-              <AiChat
-                selectedDatabase={selectedDatabase}
-                queryResults={queryResults}
-                onQueryGenerated={setCurrentQuery}
-              />
+                {showAiChat && (
+                  <AiChat
+                    selectedDatabase={selectedDatabase}
+                    queryResults={queryResults}
+                    onQueryGenerated={setCurrentQuery}
+                  />
+                )}
+              </>
             )}
           </div>
         </div>
