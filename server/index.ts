@@ -43,47 +43,40 @@ app.use((req, res, next) => {
   if (app.get("env") === "development") {
     const { storage } = await import("./storage");
     
-    // Add real Cloudflare credentials if available (but keep inactive in dev mode)
+    // Check if real Cloudflare credentials are available
     if (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) {
+      // Use real Cloudflare credentials when available
       await storage.createApiKey({
         name: "Real Cloudflare Account",
         cloudflareToken: process.env.CLOUDFLARE_API_TOKEN,
         accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
-        isActive: false, // Keep inactive in development mode
+        isActive: true, // Make real credentials active
       });
-      log("Real Cloudflare credentials configured");
+      log("Real Cloudflare credentials configured and activated");
+    } else {
+      // Only use mock data when real credentials are not available
+      const mockApiKey = await storage.createApiKey({
+        name: "Mock Development Key",
+        cloudflareToken: "mock-token-for-testing",
+        accountId: "mock-account-id",
+        isActive: true,
+      });
+
+      // Add some mock databases
+      await storage.createDatabase({
+        id: "db-test-1",
+        name: "Users Database",
+        accountId: "mock-account-id",
+      });
+
+      await storage.createDatabase({
+        id: "db-test-2", 
+        name: "Analytics Database",
+        accountId: "mock-account-id",
+      });
+
+      log("Development testing data configured (mock mode)");
     }
-    
-    // Add a mock API key for testing (active in dev mode)
-    const mockApiKey = await storage.createApiKey({
-      name: "Mock Development Key",
-      cloudflareToken: "mock-token-for-testing",
-      accountId: "mock-account-id",
-      isActive: true, // Make this active in development mode
-    });
-    
-    // Deactivate all other API keys to ensure only mock is active
-    const allKeys = await storage.getApiKeys();
-    for (const key of allKeys) {
-      if (key.id !== mockApiKey.id) {
-        await storage.updateApiKey(key.id, { isActive: false });
-      }
-    }
-
-    // Add some mock databases
-    await storage.createDatabase({
-      id: "db-test-1",
-      name: "Users Database",
-      accountId: "mock-account-id",
-    });
-
-    await storage.createDatabase({
-      id: "db-test-2", 
-      name: "Analytics Database",
-      accountId: "mock-account-id",
-    });
-
-    log("Development testing data configured");
   }
 
   const server = await registerRoutes(app);
