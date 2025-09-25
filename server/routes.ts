@@ -1,0 +1,346 @@
+import type { Express } from "express";
+import { createServer, type Server } from "http";
+import { storage } from "./storage";
+import { CloudflareD1Service } from "./services/cloudflare";
+import { openAIService } from "./services/openai";
+import { insertApiKeySchema, insertSavedQuerySchema, insertChatMessageSchema } from "@shared/schema";
+import { createHash } from "crypto";
+
+export async function registerRoutes(app: Express): Promise<Server> {
+  // API Key management
+  app.post("/api/api-keys", async (req, res) => {
+    try {
+      const data = insertApiKeySchema.parse(req.body);
+      
+      // Test the API key by trying to list databases
+      const cloudflare = new CloudflareD1Service(data.accountId, data.cloudflareToken);
+      await cloudflare.listDatabases(); // This will throw if invalid
+      
+      // Deactivate other API keys
+      const existingKeys = await storage.getApiKeys();
+      for (const key of existingKeys) {
+        await storage.updateApiKey(key.id, { isActive: false });
+      }
+      
+      const apiKey = await storage.createApiKey(data);
+      res.json(apiKey);
+    } catch (error) {
+      res.status(400).json({ 
+        message: error instanceof Error ? error.message : "Failed to create API key" 
+      });
+    }
+  });
+
+  app.get("/api/api-keys", async (req, res) => {
+    try {
+      const apiKeys = await storage.getApiKeys();
+      res.json(apiKeys);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to fetch API keys" 
+      });
+    }
+  });
+
+  app.delete("/api/api-keys/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteApiKey(req.params.id);
+      if (!success) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to delete API key" 
+      });
+    }
+  });
+
+  // Database management
+  app.get("/api/databases", async (req, res) => {
+    try {
+      const apiKey = await storage.getActiveApiKey();
+      if (!apiKey) {
+        return res.status(400).json({ message: "No active API key configured" });
+      }
+
+      const cloudflare = new CloudflareD1Service(apiKey.accountId, apiKey.cloudflareToken);
+      const databases = await cloudflare.listDatabases();
+      
+      // Store/update databases in local storage
+      for (const db of databases) {
+        await storage.createDatabase({
+          id: db.uuid,
+          name: db.name,
+          accountId: apiKey.accountId,
+        });
+      }
+
+      res.json(databases);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to fetch databases" 
+      });
+    }
+  });
+
+  app.get("/api/databases/:id/schema", async (req, res) => {
+    try {
+      const apiKey = await storage.getActiveApiKey();
+      if (!apiKey) {
+        return res.status(400).json({ message: "No active API key configured" });
+      }
+
+      const cloudflare = new CloudflareD1Service(apiKey.accountId, apiKey.cloudflareToken);
+      const schema = await cloudflare.getDatabaseSchema(req.params.id);
+      
+      res.json(schema);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to fetch database schema" 
+      });
+    }
+  });
+
+  // Query execution
+  app.post("/api/databases/:id/query", async (req, res) => {
+    try {
+      const { query } = req.body;
+      if (!query) {
+        return res.status(400).json({ message: "Query is required" });
+      }
+
+      const apiKey = await storage.getActiveApiKey();
+      if (!apiKey) {
+        return res.status(400).json({ message: "No active API key configured" });
+      }
+
+      // Check cache first
+      const queryHash = createHash('md5').update(query).digest('hex');
+      const cached = await storage.getQueryResult(queryHash, req.params.id);
+      
+      if (cached && cached.createdAt && Date.now() - cached.createdAt.getTime() < 5 * 60 * 1000) {
+        return res.json({
+          results: cached.results,
+          executionTime: cached.executionTime,
+          rowCount: cached.rowCount,
+          cached: true
+        });
+      }
+
+      const cloudflare = new CloudflareD1Service(apiKey.accountId, apiKey.cloudflareToken);
+      const startTime = Date.now();
+      const result = await cloudflare.executeQuery(req.params.id, query);
+      const executionTime = `${Date.now() - startTime}ms`;
+
+      // Cache the result
+      await storage.createQueryResult({
+        queryHash,
+        databaseId: req.params.id,
+        results: result.results,
+        executionTime,
+        rowCount: result.results.length.toString(),
+      });
+
+      res.json({
+        results: result.results,
+        executionTime,
+        rowCount: result.results.length,
+        changes: result.changes,
+        cached: false
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to execute query" 
+      });
+    }
+  });
+
+  // AI features
+  app.post("/api/ai/generate-query", async (req, res) => {
+    try {
+      const { naturalLanguageQuery, databaseId } = req.body;
+      if (!naturalLanguageQuery || !databaseId) {
+        return res.status(400).json({ message: "Natural language query and database ID are required" });
+      }
+
+      const apiKey = await storage.getActiveApiKey();
+      if (!apiKey) {
+        return res.status(400).json({ message: "No active API key configured" });
+      }
+
+      const cloudflare = new CloudflareD1Service(apiKey.accountId, apiKey.cloudflareToken);
+      const schema = await cloudflare.getDatabaseSchema(databaseId);
+      
+      const result = await openAIService.generateSQLQuery(naturalLanguageQuery, schema);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to generate SQL query" 
+      });
+    }
+  });
+
+  app.post("/api/ai/chat", async (req, res) => {
+    try {
+      const { message, databaseId, queryResults } = req.body;
+      if (!message) {
+        return res.status(400).json({ message: "Message is required" });
+      }
+
+      let schema = undefined;
+      if (databaseId) {
+        const apiKey = await storage.getActiveApiKey();
+        if (apiKey) {
+          const cloudflare = new CloudflareD1Service(apiKey.accountId, apiKey.cloudflareToken);
+          schema = await cloudflare.getDatabaseSchema(databaseId);
+        }
+      }
+
+      // Get conversation history
+      const history = await storage.getChatMessages(databaseId);
+      const conversationHistory = history.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+
+      const result = await openAIService.chatWithData(
+        message, 
+        queryResults, 
+        schema, 
+        conversationHistory
+      );
+
+      // Save user message
+      await storage.createChatMessage({
+        content: message,
+        role: 'user',
+        databaseId,
+      });
+
+      // Save AI response
+      await storage.createChatMessage({
+        content: result.response,
+        role: 'assistant',
+        databaseId,
+        generatedQuery: result.suggestedQuery,
+      });
+
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to process chat message" 
+      });
+    }
+  });
+
+  app.get("/api/chat/messages", async (req, res) => {
+    try {
+      const { databaseId } = req.query;
+      const messages = await storage.getChatMessages(databaseId as string);
+      res.json(messages);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to fetch chat messages" 
+      });
+    }
+  });
+
+  app.delete("/api/chat/messages", async (req, res) => {
+    try {
+      const { databaseId } = req.query;
+      await storage.clearChatHistory(databaseId as string);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to clear chat history" 
+      });
+    }
+  });
+
+  // Saved queries
+  app.post("/api/saved-queries", async (req, res) => {
+    try {
+      const data = insertSavedQuerySchema.parse(req.body);
+      const savedQuery = await storage.createSavedQuery(data);
+      res.json(savedQuery);
+    } catch (error) {
+      res.status(400).json({ 
+        message: error instanceof Error ? error.message : "Failed to save query" 
+      });
+    }
+  });
+
+  app.get("/api/saved-queries", async (req, res) => {
+    try {
+      const { databaseId } = req.query;
+      const queries = await storage.getSavedQueries(databaseId as string);
+      res.json(queries);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to fetch saved queries" 
+      });
+    }
+  });
+
+  app.delete("/api/saved-queries/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteSavedQuery(req.params.id);
+      if (!success) {
+        return res.status(404).json({ message: "Saved query not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to delete saved query" 
+      });
+    }
+  });
+
+  // Export functionality
+  app.post("/api/export", async (req, res) => {
+    try {
+      const { data, format, filename } = req.body;
+      
+      if (format === 'csv') {
+        const csv = convertToCSV(data);
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename || 'export.csv'}`);
+        res.send(csv);
+      } else if (format === 'json') {
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename || 'export.json'}`);
+        res.json(data);
+      } else {
+        res.status(400).json({ message: "Unsupported format" });
+      }
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to export data" 
+      });
+    }
+  });
+
+  const httpServer = createServer(app);
+  return httpServer;
+}
+
+function convertToCSV(data: any[]): string {
+  if (!data || data.length === 0) return '';
+  
+  const headers = Object.keys(data[0]);
+  const csvHeaders = headers.join(',');
+  
+  const csvRows = data.map(row => 
+    headers.map(header => {
+      const value = row[header];
+      // Escape quotes and wrap in quotes if contains comma or quote
+      if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+        return `"${value.replace(/"/g, '""')}"`;
+      }
+      return value;
+    }).join(',')
+  );
+  
+  return [csvHeaders, ...csvRows].join('\n');
+}
