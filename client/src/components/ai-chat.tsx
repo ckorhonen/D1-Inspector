@@ -23,6 +23,13 @@ export default function AiChat({ selectedDatabase, queryResults, onQueryGenerate
 
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ["/api/chat/messages", selectedDatabase?.id],
+    queryFn: async () => {
+      const response = await fetch(`/api/chat/messages?databaseId=${selectedDatabase?.id}`);
+      if (!response.ok) {
+        throw new Error(`${response.status}: ${response.statusText}`);
+      }
+      return response.json();
+    },
     enabled: !!selectedDatabase?.id,
   });
 

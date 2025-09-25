@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-// the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
+// Using OpenAI's latest GPT-4o model for optimal performance
 const openai = new OpenAI({ 
   apiKey: process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR || "default_key"
 });
@@ -32,7 +32,7 @@ Ensure the query is syntactically correct for SQLite (Cloudflare D1 uses SQLite)
 
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-5",
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
@@ -68,17 +68,17 @@ ${schema ? `Database Schema: ${schema.map(t => `${t.name}: ${t.sql}`).join('\n')
 
 ${queryResults ? `Current Query Results: ${JSON.stringify(queryResults.slice(0, 5))}${queryResults.length > 5 ? '... (showing first 5 rows)' : ''}` : ''}
 
-Respond with helpful insights, explanations, or suggestions. If you think a SQL query would be helpful, include it in your response.`;
+Please respond with helpful insights, explanations, or suggestions. If you think a SQL query would be helpful, include it in your response. Always respond in JSON format with a "response" field containing your message and an optional "suggestedQuery" field if you have a query suggestion.`;
 
     const messages = [
       { role: "system", content: systemMessage },
       ...(conversationHistory || []),
-      { role: "user", content: message }
+      { role: "user", content: `${message}\n\nPlease respond in JSON format with your answer.` }
     ];
 
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-5",
+        model: "gpt-4o",
         messages: messages as any[],
         response_format: { type: "json_object" }
       });
@@ -110,7 +110,7 @@ Respond with JSON: { "explanation": "your explanation here" }`;
 
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-5",
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
