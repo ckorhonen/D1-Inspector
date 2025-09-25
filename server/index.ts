@@ -37,6 +37,33 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Add mock data for testing when in development mode
+  if (app.get("env") === "development") {
+    const { storage } = await import("./storage");
+    
+    // Add a mock API key for testing
+    await storage.createApiKey({
+      name: "Mock Development Key",
+      cloudflareToken: "mock-token-for-testing",
+      accountId: "mock-account-id",
+    });
+
+    // Add some mock databases
+    await storage.createDatabase({
+      id: "db-test-1",
+      name: "Users Database",
+      accountId: "mock-account-id",
+    });
+
+    await storage.createDatabase({
+      id: "db-test-2", 
+      name: "Analytics Database",
+      accountId: "mock-account-id",
+    });
+
+    log("Mock data created for development testing");
+  }
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

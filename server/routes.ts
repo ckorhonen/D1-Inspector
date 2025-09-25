@@ -64,15 +64,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No active API key configured" });
       }
 
+      // In development mode with mock credentials, return mock databases
+      if (process.env.NODE_ENV === "development" && apiKey.cloudflareToken === "mock-token-for-testing") {
+        const databases = await storage.getDatabases();
+        const mockDatabases = databases.map(db => ({
+          id: db.id,  // Use id field to match frontend expectations
+          uuid: db.id,  // Keep uuid for Cloudflare API compatibility
+          name: db.name,
+          created_at: db.createdAt?.toISOString() || new Date().toISOString(),
+          version: "1.0",
+          running_in_region: "dev"
+        }));
+        return res.json(mockDatabases);
+      }
+
       const cloudflare = new CloudflareD1Service(apiKey.accountId, apiKey.cloudflareToken);
-      const databases = await cloudflare.listDatabases();
+      const cloudflareResponse = await cloudflare.listDatabases();
       
-      // Store/update databases in local storage
-      for (const db of databases) {
+      // Store/update databases in local storage and format response for frontend
+      const databases = [];
+      for (const db of cloudflareResponse) {
         await storage.createDatabase({
           id: db.uuid,
           name: db.name,
           accountId: apiKey.accountId,
+        });
+        
+        // Format response to include both id and uuid fields for frontend compatibility
+        databases.push({
+          id: db.uuid,  // Frontend expects id field
+          uuid: db.uuid,  // Keep original uuid field for API compatibility
+          name: db.name,
+          created_at: db.created_at,
+          version: db.version,
+          running_in_region: db.running_in_region
         });
       }
 
@@ -125,6 +150,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
           executionTime: cached.executionTime,
           rowCount: cached.rowCount,
           cached: true
+        });
+      }
+
+      // In development mode with mock credentials, return mock query results
+      if (process.env.NODE_ENV === "development" && apiKey.cloudflareToken === "mock-token-for-testing") {
+        const startTime = Date.now();
+        
+        // Generate mock results based on query
+        let mockResults = [];
+        if (query.toLowerCase().includes('select')) {
+          if (req.params.id === 'db-test-1') {
+            // Users Database mock data
+            mockResults = [
+              { id: 1, name: 'Alice Johnson', email: 'alice@example.com', created_at: '2024-01-15', status: 'active' },
+              { id: 2, name: 'Bob Smith', email: 'bob@example.com', created_at: '2024-01-20', status: 'active' },
+              { id: 3, name: 'Carol Davis', email: 'carol@example.com', created_at: '2024-02-01', status: 'inactive' },
+              { id: 4, name: 'David Wilson', email: 'david@example.com', created_at: '2024-02-15', status: 'active' },
+              { id: 5, name: 'Eva Brown', email: 'eva@example.com', created_at: '2024-03-01', status: 'active' }
+            ];
+          } else if (req.params.id === 'db-test-2') {
+            // Analytics Database mock data
+            mockResults = [
+              { date: '2024-03-01', page_views: 1250, unique_visitors: 820, bounce_rate: 0.35 },
+              { date: '2024-03-02', page_views: 1380, unique_visitors: 920, bounce_rate: 0.32 },
+              { date: '2024-03-03', page_views: 1150, unique_visitors: 750, bounce_rate: 0.38 },
+              { date: '2024-03-04', page_views: 1420, unique_visitors: 980, bounce_rate: 0.30 },
+              { date: '2024-03-05', page_views: 1320, unique_visitors: 850, bounce_rate: 0.34 }
+            ];
+          }
+        }
+        
+        const executionTime = `${Date.now() - startTime}ms`;
+
+        // Cache the result
+        await storage.createQueryResult({
+          queryHash,
+          databaseId: req.params.id,
+          results: mockResults,
+          executionTime,
+          rowCount: mockResults.length.toString(),
+        });
+
+        return res.json({
+          results: mockResults,
+          executionTime,
+          rowCount: mockResults.length,
+          changes: 0,
+          cached: false
         });
       }
 
