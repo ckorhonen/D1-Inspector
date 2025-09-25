@@ -143,6 +143,187 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Table rows endpoint with pagination
+  app.get("/api/databases/:id/tables/:table/rows", async (req, res) => {
+    const startTime = Date.now();
+    const { id: databaseId, table: tableName } = req.params;
+    const { limit = '50', offset = '0' } = req.query;
+
+    try {
+      // Validate pagination parameters
+      const limitNum = parseInt(limit as string, 10);
+      const offsetNum = parseInt(offset as string, 10);
+
+      if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
+        return res.status(400).json({ 
+          message: "Limit must be a number between 1 and 100",
+          rows: [],
+          rowCount: 0,
+          pageSize: 0
+        });
+      }
+
+      if (isNaN(offsetNum) || offsetNum < 0) {
+        return res.status(400).json({ 
+          message: "Offset must be a non-negative number",
+          rows: [],
+          rowCount: 0,
+          pageSize: 0
+        });
+      }
+
+      const apiKey = await storage.getActiveApiKey();
+      if (!apiKey) {
+        return res.status(400).json({ 
+          message: "No active API key configured",
+          rows: [],
+          rowCount: 0,
+          pageSize: 0
+        });
+      }
+
+      const cloudflare = new CloudflareD1Service(apiKey.accountId, apiKey.cloudflareToken);
+
+      // Validate table name against database schema
+      const schema = await cloudflare.getDatabaseSchema(databaseId);
+      const tableExists = schema.some(item => 
+        item.type === 'table' && item.name === tableName
+      );
+
+      if (!tableExists) {
+        const executionTime = `${Date.now() - startTime}ms`;
+        console.log('[TABLE_ROWS USER_ERROR]', JSON.stringify({
+          dbId: databaseId,
+          tableName,
+          duration: executionTime,
+          errorType: 'TableNotFound',
+          errorMessage: `Table '${tableName}' does not exist`,
+          timestamp: new Date().toISOString()
+        }));
+
+        return res.status(400).json({ 
+          message: `Table '${tableName}' does not exist`,
+          rows: [],
+          rowCount: 0,
+          pageSize: limitNum
+        });
+      }
+
+      // In development mode with mock credentials, return mock table data
+      if (process.env.NODE_ENV === "development" && apiKey.cloudflareToken === "mock-token-for-testing") {
+        let mockRows: any[] = [];
+        
+        if (databaseId === 'db-test-1' && tableName === 'users') {
+          const allUsers = [
+            { id: 1, name: 'Alice Johnson', email: 'alice@example.com', created_at: '2024-01-15', status: 'active' },
+            { id: 2, name: 'Bob Smith', email: 'bob@example.com', created_at: '2024-01-20', status: 'active' },
+            { id: 3, name: 'Carol Davis', email: 'carol@example.com', created_at: '2024-02-01', status: 'inactive' },
+            { id: 4, name: 'David Wilson', email: 'david@example.com', created_at: '2024-02-15', status: 'active' },
+            { id: 5, name: 'Eva Brown', email: 'eva@example.com', created_at: '2024-03-01', status: 'active' },
+            { id: 6, name: 'Frank Miller', email: 'frank@example.com', created_at: '2024-03-10', status: 'active' },
+            { id: 7, name: 'Grace Lee', email: 'grace@example.com', created_at: '2024-03-15', status: 'inactive' }
+          ];
+          mockRows = allUsers.slice(offsetNum, offsetNum + limitNum);
+        } else if (databaseId === 'db-test-2' && tableName === 'analytics') {
+          const allAnalytics = [
+            { date: '2024-03-01', page_views: 1250, unique_visitors: 820, bounce_rate: 0.35 },
+            { date: '2024-03-02', page_views: 1380, unique_visitors: 920, bounce_rate: 0.32 },
+            { date: '2024-03-03', page_views: 1150, unique_visitors: 750, bounce_rate: 0.38 },
+            { date: '2024-03-04', page_views: 1420, unique_visitors: 980, bounce_rate: 0.30 },
+            { date: '2024-03-05', page_views: 1320, unique_visitors: 850, bounce_rate: 0.34 },
+            { date: '2024-03-06', page_views: 1480, unique_visitors: 1020, bounce_rate: 0.29 },
+            { date: '2024-03-07', page_views: 1350, unique_visitors: 880, bounce_rate: 0.33 }
+          ];
+          mockRows = allAnalytics.slice(offsetNum, offsetNum + limitNum);
+        }
+
+        const executionTime = `${Date.now() - startTime}ms`;
+        
+        // Structured logging for successful table rows fetch
+        console.log('[TABLE_ROWS SUCCESS]', JSON.stringify({
+          dbId: databaseId,
+          tableName,
+          duration: executionTime,
+          rowCount: mockRows.length,
+          pageSize: limitNum,
+          offset: offsetNum,
+          timestamp: new Date().toISOString()
+        }));
+
+        return res.json({
+          rows: mockRows,
+          rowCount: mockRows.length,
+          pageSize: limitNum
+        });
+      }
+
+      // Build safe SQL query with identifier quoting to prevent SQL injection
+      const query = `SELECT * FROM "${tableName}" LIMIT ${limitNum} OFFSET ${offsetNum}`;
+      
+      const result = await cloudflare.executeQuery(databaseId, query);
+      const executionTime = `${Date.now() - startTime}ms`;
+
+      // Structured logging for successful table rows fetch
+      console.log('[TABLE_ROWS SUCCESS]', JSON.stringify({
+        dbId: databaseId,
+        tableName,
+        duration: executionTime,
+        rowCount: result.results.length,
+        pageSize: limitNum,
+        offset: offsetNum,
+        timestamp: new Date().toISOString()
+      }));
+
+      res.json({
+        rows: result.results,
+        rowCount: result.results.length,
+        pageSize: limitNum
+      });
+
+    } catch (error) {
+      const executionTime = `${Date.now() - startTime}ms`;
+      
+      // Structured logging for errors
+      const logData = {
+        dbId: databaseId,
+        tableName,
+        duration: executionTime,
+        errorType: error instanceof Error ? error.constructor.name : 'UnknownError',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
+        timestamp: new Date().toISOString()
+      };
+
+      if (error instanceof CloudflareUserError) {
+        // User errors should return 400
+        console.log('[TABLE_ROWS USER_ERROR]', JSON.stringify(logData));
+        res.status(400).json({ 
+          message: error.message,
+          rows: [],
+          rowCount: 0,
+          pageSize: parseInt(limit as string, 10) || 50
+        });
+      } else if (error instanceof CloudflareSystemError) {
+        // System errors should return 500
+        console.error('[TABLE_ROWS SYSTEM_ERROR]', JSON.stringify(logData));
+        res.status(500).json({ 
+          message: "Internal server error occurred while fetching table data",
+          rows: [],
+          rowCount: 0,
+          pageSize: parseInt(limit as string, 10) || 50
+        });
+      } else {
+        // Unknown errors default to 500
+        console.error('[TABLE_ROWS UNKNOWN_ERROR]', JSON.stringify(logData));
+        res.status(500).json({ 
+          message: "Failed to fetch table data",
+          rows: [],
+          rowCount: 0,
+          pageSize: parseInt(limit as string, 10) || 50
+        });
+      }
+    }
+  });
+
   // Query execution
   app.post("/api/databases/:id/query", async (req, res) => {
     const startTime = Date.now();
