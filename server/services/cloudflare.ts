@@ -96,6 +96,28 @@ export class CloudflareD1Service {
   }
 
   async getDatabaseSchema(databaseId: string): Promise<any[]> {
+    // In development mode with mock credentials, return mock schema
+    if (process.env.NODE_ENV === "development" && this.apiToken === "mock-token-for-testing") {
+      if (databaseId === "db-test-1") {
+        return [
+          {
+            name: "users",
+            type: "table",
+            sql: "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, created_at TEXT, status TEXT)"
+          }
+        ];
+      } else if (databaseId === "db-test-2") {
+        return [
+          {
+            name: "analytics",
+            type: "table", 
+            sql: "CREATE TABLE analytics (date TEXT, page_views INTEGER, unique_visitors INTEGER, bounce_rate REAL)"
+          }
+        ];
+      }
+      return [];
+    }
+
     const schemaQuery = `
       SELECT 
         name, 
