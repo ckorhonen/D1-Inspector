@@ -78,6 +78,24 @@ export default function AppLayout() {
 
   const activeApiKey = apiKeys.find((key: any) => key.isActive);
 
+  // Handle table selection
+  const handleTableSelect = (database: Database, tableName: string) => {
+    // First select the database if it's not already selected
+    if (selectedDatabase?.id !== database.id) {
+      setSelectedDatabase(database);
+    }
+    
+    // Generate a SELECT query for the table
+    const query = `SELECT * FROM "${tableName}" LIMIT 100;`;
+    setCurrentQuery(query);
+    
+    // Show a toast notification
+    toast({
+      title: "Table Selected",
+      description: `Loaded sample query for table "${tableName}"`,
+    });
+  };
+
   // Show welcome screen if no API key is configured
   if (!databasesLoading && (!apiKeys || apiKeys.length === 0)) {
     return (
@@ -162,6 +180,7 @@ export default function AppLayout() {
         databases={databases}
         selectedDatabase={selectedDatabase}
         onSelectDatabase={setSelectedDatabase}
+        onTableSelect={handleTableSelect}
         isLoading={databasesLoading}
       />
 
