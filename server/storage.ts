@@ -116,7 +116,8 @@ export class MemStorage implements IStorage {
   async createSavedQuery(insertQuery: InsertSavedQuery): Promise<SavedQuery> {
     const id = randomUUID();
     const savedQuery: SavedQuery = { 
-      ...insertQuery, 
+      ...insertQuery,
+      description: insertQuery.description ?? null,
       id, 
       createdAt: new Date(),
       updatedAt: new Date()
@@ -151,7 +152,9 @@ export class MemStorage implements IStorage {
   async createChatMessage(insertMessage: InsertChatMessage): Promise<ChatMessage> {
     const id = randomUUID();
     const chatMessage: ChatMessage = { 
-      ...insertMessage, 
+      ...insertMessage,
+      databaseId: insertMessage.databaseId ?? null,
+      generatedQuery: insertMessage.generatedQuery ?? null,
       id, 
       createdAt: new Date()
     };
@@ -183,7 +186,9 @@ export class MemStorage implements IStorage {
   async createQueryResult(insertResult: InsertQueryResult): Promise<QueryResult> {
     const id = randomUUID();
     const queryResult: QueryResult = { 
-      ...insertResult, 
+      ...insertResult,
+      executionTime: insertResult.executionTime ?? null,
+      rowCount: insertResult.rowCount ?? null,
       id, 
       createdAt: new Date()
     };

@@ -147,7 +147,7 @@ export default function QueryResults({ results, selectedDatabase }: QueryResults
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {paginatedData.map((row, index) => (
+                  {paginatedData.map((row: any, index: number) => (
                     <TableRow 
                       key={index}
                       className="border-b border-border hover:bg-accent/50 transition-colors"

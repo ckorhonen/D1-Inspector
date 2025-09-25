@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { CloudflareD1Service } from "./services/cloudflare";
+import { CloudflareD1Service, CloudflareUserError, CloudflareSystemError } from "./services/cloudflare";
 import { openAIService } from "./services/openai";
 import { insertApiKeySchema, insertSavedQuerySchema, insertChatMessageSchema } from "@shared/schema";
 import { createHash } from "crypto";
@@ -145,6 +145,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Query execution
   app.post("/api/databases/:id/query", async (req, res) => {
+    const startTime = Date.now();
+    let queryHash = '';
     try {
       const { query } = req.body;
       if (!query) {
@@ -157,14 +159,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Check cache first
-      const queryHash = createHash('md5').update(query).digest('hex');
+      queryHash = createHash('md5').update(query).digest('hex');
       const cached = await storage.getQueryResult(queryHash, req.params.id);
       
       if (cached && cached.createdAt && Date.now() - cached.createdAt.getTime() < 5 * 60 * 1000) {
         return res.json({
           results: cached.results,
           executionTime: cached.executionTime,
-          rowCount: cached.rowCount,
+          rowCount: parseInt(cached.rowCount || '0') || 0,
           cached: true
         });
       }
@@ -218,9 +220,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const cloudflare = new CloudflareD1Service(apiKey.accountId, apiKey.cloudflareToken);
-      const startTime = Date.now();
       const result = await cloudflare.executeQuery(req.params.id, query);
       const executionTime = `${Date.now() - startTime}ms`;
+
+      // Structured logging for successful queries
+      console.log('[QUERY SUCCESS]', JSON.stringify({
+        dbId: req.params.id,
+        queryHash,
+        duration: executionTime,
+        rowCount: result.results.length,
+        timestamp: new Date().toISOString()
+      }));
 
       // Cache the result
       await storage.createQueryResult({
@@ -239,9 +249,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cached: false
       });
     } catch (error) {
-      res.status(500).json({ 
-        message: error instanceof Error ? error.message : "Failed to execute query" 
-      });
+      const executionTime = `${Date.now() - startTime}ms`;
+      
+      // Structured logging for errors
+      const logData = {
+        dbId: req.params.id,
+        queryHash,
+        duration: executionTime,
+        errorType: error instanceof Error ? error.constructor.name : 'UnknownError',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
+        timestamp: new Date().toISOString()
+      };
+
+      if (error instanceof CloudflareUserError) {
+        // User SQL errors should return 400
+        console.log('[QUERY USER_ERROR]', JSON.stringify(logData));
+        res.status(400).json({ 
+          message: error.message,
+          results: [],
+          rowCount: 0,
+          executionTime
+        });
+      } else if (error instanceof CloudflareSystemError) {
+        // System errors should return 500
+        console.error('[QUERY SYSTEM_ERROR]', JSON.stringify(logData));
+        res.status(500).json({ 
+          message: "Internal server error occurred while executing query",
+          results: [],
+          rowCount: 0,
+          executionTime
+        });
+      } else {
+        // Unknown errors default to 500
+        console.error('[QUERY UNKNOWN_ERROR]', JSON.stringify(logData));
+        res.status(500).json({ 
+          message: "Failed to execute query",
+          results: [],
+          rowCount: 0,
+          executionTime
+        });
+      }
     }
   });
 

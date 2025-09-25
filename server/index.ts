@@ -43,24 +43,32 @@ app.use((req, res, next) => {
   if (app.get("env") === "development") {
     const { storage } = await import("./storage");
     
-    // Add real Cloudflare credentials if available
+    // Add real Cloudflare credentials if available (but keep inactive in dev mode)
     if (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) {
       await storage.createApiKey({
         name: "Real Cloudflare Account",
         cloudflareToken: process.env.CLOUDFLARE_API_TOKEN,
         accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
-        isActive: true,
+        isActive: false, // Keep inactive in development mode
       });
       log("Real Cloudflare credentials configured");
     }
     
-    // Also add a mock API key for fallback testing
-    await storage.createApiKey({
+    // Add a mock API key for testing (active in dev mode)
+    const mockApiKey = await storage.createApiKey({
       name: "Mock Development Key",
       cloudflareToken: "mock-token-for-testing",
       accountId: "mock-account-id",
-      isActive: false,
+      isActive: true, // Make this active in development mode
     });
+    
+    // Deactivate all other API keys to ensure only mock is active
+    const allKeys = await storage.getApiKeys();
+    for (const key of allKeys) {
+      if (key.id !== mockApiKey.id) {
+        await storage.updateApiKey(key.id, { isActive: false });
+      }
+    }
 
     // Add some mock databases
     await storage.createDatabase({
